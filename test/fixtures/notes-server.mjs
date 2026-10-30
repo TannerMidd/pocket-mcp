@@ -20,7 +20,28 @@ if (process.env.PID_FILE) {
 const notesFile = process.env.NOTES_FILE ?? "notes.txt";
 let extra = false;
 
+/** A form of `count` text fields: its schema is about 80 characters a field. */
+const form = (count) => ({
+    type: "object",
+    properties: Object.fromEntries(
+        Array.from({ length: count }, (_, index) => [
+            `field_${index}`,
+            { type: "string", description: `Field ${index} of the form, as the person wrote it.` },
+        ]),
+    ),
+});
+
 const tools = () => [
+    {
+        name: "fill_form",
+        description: "Fill in a form with many fields.",
+        inputSchema: form(30),
+    },
+    {
+        name: "bulk_form",
+        description: "Fill in a very large form.",
+        inputSchema: form(415),
+    },
     {
         name: "add_note",
         description: "Add a note to the list.",

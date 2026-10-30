@@ -686,11 +686,14 @@ export default function createMcp(host: Host, web: Web) {
         defineTool({
             name: "mcp_tools",
             description:
-                "List the tools of the MCP servers that the owner connected, with the arguments that each tool takes. Give `server` to list one server, and `query` to keep only tools whose names or descriptions have all these words. Then call a tool with mcp_call.",
+                "List the tools of the MCP servers that the owner connected, with the arguments that each tool takes. Give `server` to list one server, `query` to keep only tools whose names or descriptions have all these words, and `tool` for one tool with its whole schema. Then call a tool with mcp_call.",
             parameters: Type.Object({
                 server: Type.Optional(Type.String({ description: "List only this server" })),
                 query: Type.Optional(
                     Type.String({ description: "Words to look for in names and descriptions" }),
+                ),
+                tool: Type.Optional(
+                    Type.String({ description: "One tool's exact name, for its whole schema" }),
                 ),
             }),
             replay: "safe",
@@ -714,38 +717,63 @@ export default function createMcp(host: Host, web: Web) {
                 await Promise.all(targets.map((server) => server.ready(LIST_WAIT_MS)));
 
                 const words = (args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-                const lines: string[] = [];
-
-                let size = 0;
-
-                let left = 0;
-
-                for (const server of targets) {
+                const filtered = words.length > 0 || args.tool !== undefined;
+                const listed = targets.map((server) => {
                     if (server.status !== "connected") {
-                        lines.push(notConnected(server));
-                        continue;
+                        return { server, visible: [], matches: [] };
                     }
 
                     const visible = servers.visible(server);
                     const matches = visible.filter((tool) => {
+                        if (args.tool !== undefined) {
+                            return tool.name === args.tool;
+                        }
+
                         const haystack =
                             `${tool.name} ${titleOf(tool) ?? ""} ${text(tool.description) ?? ""}`.toLowerCase();
 
                         return words.every((word) => haystack.includes(word));
                     });
 
+                    return { server, visible, matches };
+                });
+                // Whole schemas when they all fit, as for one tool or a narrow query. In a long list, a large schema is
+                // named, never cut: half a schema is not valid JSON.
+                const whole =
+                    args.tool !== undefined ||
+                    listed
+                        .flatMap(({ matches }) => matches)
+                        .reduce(
+                            (sum, tool) => sum + JSON.stringify(tool.inputSchema ?? {}).length,
+                            0,
+                        ) <= MAX_LIST_CHARS;
+                const lines: string[] = [];
+
+                let size = 0;
+
+                let left = 0;
+
+                for (const { server, visible, matches } of listed) {
+                    if (server.status !== "connected") {
+                        lines.push(notConnected(server));
+                        continue;
+                    }
+
                     lines.push(
-                        `Server ${quote(server.name)}: ${words.length > 0 ? `${matches.length} of ${visible.length} tools match` : `${visible.length} tools`}.`,
+                        `Server ${quote(server.name)}: ${filtered ? `${matches.length} of ${visible.length} tools match` : `${visible.length} tools`}.`,
                     );
 
                     for (const tool of matches) {
                         const about = [titleOf(tool), text(tool.description)]
                             .filter(Boolean)
                             .join(" — ");
-                        const schema = cut(
-                            JSON.stringify(tool.inputSchema ?? {}),
-                            MAX_SCHEMA_CHARS,
-                        );
+                        const json = JSON.stringify(tool.inputSchema ?? {});
+                        // Room for its name and description: one tool's entry always fits.
+                        const schema = whole
+                            ? cut(json, MAX_LIST_CHARS - 1_000)
+                            : json.length <= MAX_SCHEMA_CHARS
+                              ? json
+                              : `(a schema of ${json.length} characters: give \`tool\` ${JSON.stringify(tool.name)} for all of it)`;
                         const entry = [
                             `- ${JSON.stringify(tool.name)}${servers.planAllowed(server, tool) ? " [read-only]" : ""}: ${about ? quote(about, 400) : "(no description)"}`,
                             `  arguments: ${host.text.defang(schema)}`,

@@ -15,7 +15,7 @@ Pi's terminal app has MCP built in. Pi Pocket runs on Pi Durable, and does not h
     - sign in to an HTTP server, or sign out,
     - let plan mode run the tools that a server marks read-only.
 - **Three tools for Pi:**
-    - `mcp_tools` lists the tools of the servers that are on, with the arguments of each tool. It can find tools by words.
+    - `mcp_tools` lists the tools of the servers that are on, with the arguments of each tool. It can find tools by words, or give one tool by its name. A schema always goes whole: in a list too long for every schema, a large one is named, and Pi asks for that tool to get it.
     - `mcp_call` calls a tool.
     - `mcp_call_read_only` calls a tool too, but only a read-only tool (see [Plan mode](#plan-mode)). Plan mode lets Pi use it.
 - **A section in Pi's system prompt** that names the servers that are on, with the `description` of each server from `mcp.json`.

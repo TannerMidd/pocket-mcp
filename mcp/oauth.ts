@@ -407,6 +407,22 @@ async function listen(
     }
 }
 
+/** A store that keeps a sign-in's state apart from `store` until the sign-in saves tokens, and then writes it there. */
+function untilTokens(store: McpOAuthStateStore, start: McpOAuthState): McpOAuthStateStore {
+    let state = start;
+
+    return {
+        load: () => state,
+        save: async (next) => {
+            state = next;
+
+            if (next.tokens !== undefined) {
+                await store.save(next);
+            }
+        },
+    };
+}
+
 /**
  * Start a sign-in. Returns `undefined` when the stored refresh token was enough, and otherwise the sign-in, which
  * waits for the browser at the loopback callback or for a pasted address. The callback closes when it ends.
@@ -435,13 +451,17 @@ export async function startSignIn(options: {
     const redirectUrl = callbackOptions.fixedRedirectUrl ?? callback.redirectUrl;
     const closeCallback = () => callback.close().catch(() => undefined);
 
+    let flowStore = store;
+
     try {
         if (stored) {
             const next = { ...stored };
 
             delete next.oauthState;
 
-            // A registered client cannot use another redirect address, and its tokens are its own.
+            // A registered client cannot use another redirect address, and its tokens are its own. The sign-in starts
+            // without them, but the stored ones stay in use until it saves new tokens: a sign-in cancelled, failed, or
+            // never finished leaves the owner signed in as before.
             if (
                 !settings.clientId &&
                 !registeredRedirects(stored.clientInformation).includes(redirectUrl)
@@ -449,14 +469,15 @@ export async function startSignIn(options: {
                 delete next.clientInformation;
                 delete next.tokens;
                 delete next.tokensExpireAt;
+                flowStore = untilTokens(store, next);
+            } else {
+                await store.save(next);
             }
-
-            await store.save(next);
         }
 
         let authorizationUrl: URL | undefined;
 
-        const oauth = provider(serverUrl, store, settings, redirectUrl, (url) => {
+        const oauth = provider(serverUrl, flowStore, settings, redirectUrl, (url) => {
             authorizationUrl = url;
         });
         const scope = mergeScopes(

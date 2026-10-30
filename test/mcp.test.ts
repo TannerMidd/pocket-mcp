@@ -203,6 +203,31 @@ test("plan mode runs only the read-only tools of servers that the owner trusts",
     await app.commands.setPlan(session, owner(app), false);
 });
 
+test("a schema reaches Pi whole, or is named with the way to get it whole, never cut", async () => {
+    /** The arguments line of a tool in what mcp_tools gave Pi. */
+    const schemaOf = async (args: Record<string, unknown>, tool: string) => {
+        const said = (JSON.parse(await ask("mcp_tools", args)) as { text: string }[])
+            .map((block) => block.text)
+            .join("");
+
+        assert.doesNotMatch(said, /characters left out/);
+
+        return new RegExp(`- "${tool}".*\\n  arguments: (.*)`).exec(said)?.[1] ?? "";
+    };
+
+    assert.match(
+        await schemaOf({ server: "notes" }, "fill_form"),
+        /^\(a schema of \d+ characters: give `tool` "fill_form"/,
+    );
+
+    for (const args of [{ query: "many fields" }, { tool: "fill_form" }, { tool: "bulk_form" }]) {
+        const tool = args.tool ?? "fill_form";
+        const schema = JSON.parse(await schemaOf(args, tool));
+
+        assert.equal(Object.keys(schema.properties).length, tool === "fill_form" ? 30 : 415);
+    }
+});
+
 test("turning the module off stops the server's process", async () => {
     const pid = Number(readFileSync(pidFile, "utf8"));
 
