@@ -318,7 +318,66 @@ test("project servers require separate approval, shadow user servers, and stay i
     }
 });
 
+test("project settings-only overrides preserve user credentials and invalidate inherited approvals", async () => {
+    const userSession = session;
+    const project = join(root, "project-overrides");
+    const directory = join(project, ".pi");
+    const scoped = (path: string) => `${path}?project=${encodeURIComponent(project)}`;
+    const writeOverride = (override: object) =>
+        writeFileSync(
+            join(directory, "mcp.json"),
+            JSON.stringify({ mcpServers: { notes: override } }),
+        );
+
+    mkdirSync(directory, { recursive: true });
+    writeOverride({ enabled: false });
+    session = await newSession(app, project);
+
+    try {
+        let state = await route(scoped("state"));
+
+        assert.deepEqual(state.errors, []);
+        assert.equal(state.servers[0].enabledInFile, false);
+        assert.match(await mcpCall("notes", "list_notes"), /No MCP server/);
+        writeOverride({
+            enabled: true,
+            exposure: "hidden",
+            toolExposure: { list_notes: "codemode" },
+        });
+        state = await route(scoped("reload"), {});
+        assert.equal(state.servers[0].pocket, "off", "the inherited entry needs project approval");
+        await route(scoped("servers/notes/on"), {
+            on: true,
+            fingerprint: state.servers[0].fingerprint,
+        });
+        assert.match(
+            await mcpCall("notes", "list_notes"),
+            /one/,
+            "NOTES_FILE is inherited from the user entry",
+        );
+        assert.match(await mcpCall("notes", "inject"), /has no tool/);
+
+        writeConfig({ notes: notes({ INHERITED_CHANGED: "yes" }) });
+        assert.match(await mcpCall("notes", "list_notes"), /No MCP server/);
+        assert.equal((await route(scoped("state"))).servers[0].pocket, "changed");
+        assert.equal(
+            (await route(scoped("state"))).servers[0].parts.some(
+                (part: { key: string; changed: boolean }) =>
+                    part.key === "env.INHERITED_CHANGED" && part.changed,
+            ),
+            true,
+        );
+    } finally {
+        session = userSession;
+        writeConfig({ notes: notes() });
+        await route("reload", {});
+    }
+});
+
 test("turning the module off stops the server's process", async () => {
+    // Project copies can inherit PID_FILE too; reconnect so this file identifies the user connection under test.
+    await route("servers/notes/reconnect", {});
+
     const pid = Number(readFileSync(pidFile, "utf8"));
 
     const alive = () => {

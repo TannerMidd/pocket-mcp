@@ -166,6 +166,7 @@ class Servers {
     readonly #settings;
     readonly #oauth;
     readonly #agentDir: string;
+    readonly #userAgentDir: string;
     readonly #cwd: string | undefined;
     #closed = false;
     #started = false;
@@ -176,6 +177,7 @@ class Servers {
     constructor(host: Host, web: Web, scope?: { agentDir: string; dataDir: string; cwd: string }) {
         this.#web = web;
         this.#agentDir = scope?.agentDir ?? host.agentDir;
+        this.#userAgentDir = host.agentDir;
         this.#cwd = scope?.cwd;
         this.#settings = settingsStore(scope?.dataDir ?? host.dataDir);
         this.#oauth = oauthFile(scope?.dataDir ?? host.dataDir);
@@ -203,7 +205,9 @@ class Servers {
     }
 
     async #load(): Promise<void> {
-        const config = await loadConfig(this.#agentDir, this.#cwd);
+        // Re-read inherited entries too: a changed user command or credential invalidates project approval.
+        const user = this.#cwd === undefined ? undefined : await loadConfig(this.#userAgentDir);
+        const config = await loadConfig(this.#agentDir, this.#cwd, user);
 
         let settings: Settings;
 

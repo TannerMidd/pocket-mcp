@@ -62,8 +62,28 @@ The extension also reads `<session cwd>/.pi/mcp.json`. Open the MCP page and sel
 - User servers remain available unless the project has an entry with the same name. A project entry shadows that user entry even when it is off, disabled, unsupported, or awaiting approval. A malformed project file blocks the user fallback until you fix it.
 - Project entries start off. User approvals do not approve project entries. The extension checks the project file before each prompt and tool call; changed entries stop until the owner approves them again.
 - Each project has its own connections, approvals, plan-mode trust, and OAuth tokens. Sessions in the same project share them. Symlink aliases of the project folder share the same canonical identity.
-- A project stdio server starts in the project root by default. A relative `cwd` resolves from that root. The entry shown for approval includes the effective absolute `cwd`.
+- A full project stdio entry starts in the project root by default. A relative `cwd` resolves from that root. A settings-only override keeps the user entry's working-folder semantics. The entry shown for approval includes the effective absolute `cwd`.
 - Project state lives below `~/.pi-pocket/mcp/projects/<sha256-of-canonical-root>/mcp/`. The existing user settings and OAuth files do not move. Project connections start on first use and remain until disabled or the module stops.
+
+#### Settings-only project overrides
+
+As in Pi's terminal app, a project entry without `command`, `url`, or `type` can set only `enabled`, `exposure`, and `toolExposure` on a same-name user entry. All other fields are inherited, including `env`, `headers`, `auth`, arguments, timeouts, and working-folder behavior. For example:
+
+```json
+{
+    "mcpServers": {
+        "internal-tools": { "enabled": false },
+        "docs": {
+            "exposure": "hidden",
+            "toolExposure": { "search": "codemode" }
+        }
+    }
+}
+```
+
+An override replaces the entire `toolExposure` map when supplied; it does not merge individual keys. Unknown user servers, extra override fields, and invalid setting values are configuration errors. An entry with a transport field is a full replacement, not an override.
+
+The owner reviews and approves the effective merged entry in the project scope. User approval alone is not sufficient. Changes to inherited fields also invalidate project approval, so a changed user command or credential cannot silently change an approved project connection. Existing limitations remain: `auth.provider` is preserved but unsupported, and non-hidden exposure modes all use `mcp_tools` and `mcp_call`.
 
 This is tool visibility isolation, not an operating-system sandbox. A trusted MCP server still runs with your user rights and can access other folders. Review project entries before you approve them, particularly entries from a cloned repository.
 
@@ -92,7 +112,7 @@ The switch stops a changed entry that you did not see. For example, Pi can chang
 ### How Pi Pocket runs servers
 
 - **One copy per scope.** Pi Pocket starts one copy of each user server for all sessions, and one copy of each project server for sessions in that project. The terminal app starts a copy for each session, in the session's folder.
-- **The folder.** A stdio server runs in the folder that its `cwd` gives. For user entries, a relative `cwd`, and no `cwd`, start from your home folder. For project entries, they start from the project root. So an argument such as `.` is your home folder, not the folder of a session. Give a full path instead.
+- **The folder.** A stdio server runs in the folder that its `cwd` gives. For user entries, a relative `cwd`, and no `cwd`, start from your home folder. For full project entries, they start from the project root. Settings-only project overrides keep the user folder semantics. So an argument such as `.` is your home folder, not the folder of a session. Give a full path instead.
 - **No roots.** Pi Pocket does not send roots (folders) to servers.
 - **Environment.** A stdio server gets the environment of Pi Pocket's server, and the `env` of its entry. Values in `env` and `headers` can name environment variables (`${GITHUB_TOKEN}`) or run a command (`"!gh auth token"`), as in the terminal app.
 - **Exposure.** Pi Pocket does not use `exposure` and `toolExposure`, except `hidden`: a hidden tool is not available to Pi. All other tools are available through `mcp_tools` and `mcp_call`.

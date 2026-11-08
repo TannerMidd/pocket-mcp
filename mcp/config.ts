@@ -373,7 +373,11 @@ function unsupported(config: ServerConfig): string | undefined {
  * The servers of `<agentDir>/mcp.json`. For a project, pass its `.pi` folder and its root as `cwd`.
  * Resolve the effective working folder before fingerprinting, so approval covers what actually runs.
  */
-export async function loadConfig(agentDir: string, cwd?: string): Promise<LoadedConfig> {
+export async function loadConfig(
+    agentDir: string,
+    cwd?: string,
+    user?: LoadedConfig,
+): Promise<LoadedConfig> {
     const file = join(agentDir, "mcp.json");
     const loaded: LoadedConfig = { file, servers: [], errors: [] };
 
@@ -410,13 +414,47 @@ export async function loadConfig(agentDir: string, cwd?: string): Promise<Loaded
     for (const [name, source] of Object.entries(
         (parsed.mcpServers ?? {}) as Record<string, unknown>,
     )) {
-        const raw =
+        let effective = source;
+        let baseCwd = cwd;
+
+        if (
             cwd !== undefined &&
             isRecord(source) &&
-            typeof source.command === "string" &&
-            (source.cwd === undefined || typeof source.cwd === "string")
-                ? { ...source, cwd: resolve(cwd, expandHome(source.cwd ?? ".")) }
-                : source;
+            source.command === undefined &&
+            source.url === undefined &&
+            source.type === undefined
+        ) {
+            const base = user?.servers.find((entry) => entry.name === name);
+            const extra = Object.keys(source).filter(
+                (key) => !["enabled", "exposure", "toolExposure"].includes(key),
+            );
+
+            if (base === undefined) {
+                loaded.errors.push(
+                    `server "${name}" needs "command" or "url", or a user server to override`,
+                );
+                continue;
+            }
+
+            if (extra.length > 0) {
+                loaded.errors.push(
+                    `server "${name}": an override can only set enabled, exposure, toolExposure`,
+                );
+                continue;
+            }
+
+            // Inherit credentials and transport intact. Settings-only overrides keep the user's cwd semantics.
+            effective = { ...base.config, ...source };
+            baseCwd = "command" in base.config ? homedir() : undefined;
+        }
+
+        const raw =
+            baseCwd !== undefined &&
+            isRecord(effective) &&
+            typeof effective.command === "string" &&
+            (effective.cwd === undefined || typeof effective.cwd === "string")
+                ? { ...effective, cwd: resolve(baseCwd, expandHome(effective.cwd ?? ".")) }
+                : effective;
         const config = validateServer(name, raw);
 
         if (typeof config === "string") {
