@@ -228,6 +228,96 @@ test("a schema reaches Pi whole, or is named with the way to get it whole, never
     }
 });
 
+test("project servers require separate approval, shadow user servers, and stay in their session folder", async () => {
+    const userSession = session;
+    const project = join(root, "project-a");
+    const other = join(root, "project-b");
+    const configDir = join(project, ".pi");
+    const projectNotes = join(project, "notes.txt");
+
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(join(other, ".pi"), { recursive: true });
+    const config = {
+        notes: { command: process.execPath, args: [fixture] },
+        private: { command: process.execPath, args: [fixture] },
+    };
+    const writeProject = (entries: object) =>
+        writeFileSync(join(configDir, "mcp.json"), JSON.stringify({ mcpServers: entries }));
+    const scoped = (path: string) => `${path}?project=${encodeURIComponent(project)}`;
+
+    writeProject(config);
+    session = await newSession(app, project);
+
+    try {
+        const state = await route(scoped("state"));
+        const entry = state.servers.find((entry: { name: string }) => entry.name === "notes");
+
+        assert.equal(entry.pocket, "off", "user approval does not approve a project server");
+        assert.match(await mcpCall("notes", "add_note", { text: "blocked" }), /No MCP server/);
+        assert.equal(existsSync(projectNotes), false, "no fallback to the user server");
+        await route(scoped("servers/notes/on"), { on: true, fingerprint: entry.fingerprint });
+        const privateEntry = state.servers.find(
+            (entry: { name: string }) => entry.name === "private",
+        );
+
+        await route(scoped("servers/private/on"), {
+            on: true,
+            fingerprint: privateEntry.fingerprint,
+        });
+        await mcpCall("notes", "add_note", { text: "project only" });
+        assert.equal(
+            readFileSync(projectNotes, "utf8"),
+            "project only\n",
+            "default cwd is the project root",
+        );
+        assert.equal(readFileSync(notesFile, "utf8"), "one\n", "the user server was not called");
+        assert.match(
+            await mcpCall("notes", "list_notes", {}, "mcp_call_read_only"),
+            /owner has not let plan mode/,
+        );
+        await route(scoped("servers/notes/plan-mode"), { on: true });
+        assert.match(
+            await mcpCall("notes", "list_notes", {}, "mcp_call_read_only"),
+            /project only/,
+        );
+
+        session = await newSession(app, other);
+        assert.match(
+            await mcpCall("private", "add_note", { text: "cross-project" }),
+            /No MCP server/,
+        );
+        assert.doesNotMatch(await ask("mcp_tools", {}), /Server .private/);
+        session = await newSession(app, project);
+        await app.setExtensionEnabled(owner(app), "mcp.ts", false);
+        await app.setExtensionEnabled(owner(app), "mcp.ts", true);
+        assert.match(
+            await mcpCall("notes", "list_notes", {}, "mcp_call_read_only"),
+            /project only/,
+            "project approval and plan-mode trust survive a reload",
+        );
+        writeFileSync(join(configDir, "mcp.json"), "{ broken json");
+        assert.match(
+            await mcpCall("notes", "add_note", { text: "malformed fallback" }),
+            /No MCP server/,
+        );
+        assert.equal(readFileSync(notesFile, "utf8"), "one\n");
+        writeProject({ ...config, notes: { ...config.notes, env: { EXTRA: "changed" } } });
+        assert.match(
+            await mcpCall("notes", "add_note", { text: "stale approval" }),
+            /No MCP server/,
+        );
+        assert.equal(readFileSync(projectNotes, "utf8"), "project only\n");
+        assert.equal(
+            (await route(scoped("state"))).servers.find(
+                (entry: { name: string }) => entry.name === "notes",
+            ).pocket,
+            "changed",
+        );
+    } finally {
+        session = userSession;
+    }
+});
+
 test("turning the module off stops the server's process", async () => {
     const pid = Number(readFileSync(pidFile, "utf8"));
 

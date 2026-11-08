@@ -22,7 +22,7 @@ Pi's terminal app has MCP built in. Pi Pocket runs on Pi Durable, and does not h
 
 ## Install
 
-You need a Pi Pocket release after 0.14.0. From that release, drop-ins can import `@earendil-works/pi-mcp`.
+You need Pi Pocket 0.28.0 or later. This version uses `@earendil-works/pi-schema` and the version 2 tool result API.
 
 1. Copy `mcp.ts` and the `mcp/` folder into `~/.pi-pocket/extensions/`.
 2. Read the code. A drop-in runs inside the server with your rights.
@@ -54,6 +54,19 @@ pi mcp add docs --url https://example.com/mcp
 
 Pi's [MCP documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md) tells all the fields. Then open the MCP page, and tap **Read mcp.json again**.
 
+### Project servers
+
+The extension also reads `<session cwd>/.pi/mcp.json`. Open the MCP page and select **Project · /path/to/project** under **Configuration**. The selector lists the local folders of your Pocket sessions. Read the project file and turn on each server after you review its entry.
+
+- Tool calls and the prompt use the session's folder, not a project argument from Pi. A project server is available only to sessions in that folder. Subfolders do not inherit it; there is no parent-folder search. Remote workspace URIs are not supported.
+- User servers remain available unless the project has an entry with the same name. A project entry shadows that user entry even when it is off, disabled, unsupported, or awaiting approval. A malformed project file blocks the user fallback until you fix it.
+- Project entries start off. User approvals do not approve project entries. The extension checks the project file before each prompt and tool call; changed entries stop until the owner approves them again.
+- Each project has its own connections, approvals, plan-mode trust, and OAuth tokens. Sessions in the same project share them. Symlink aliases of the project folder share the same canonical identity.
+- A project stdio server starts in the project root by default. A relative `cwd` resolves from that root. The entry shown for approval includes the effective absolute `cwd`.
+- Project state lives below `~/.pi-pocket/mcp/projects/<sha256-of-canonical-root>/mcp/`. The existing user settings and OAuth files do not move. Project connections start on first use and remain until disabled or the module stops.
+
+This is tool visibility isolation, not an operating-system sandbox. A trusted MCP server still runs with your user rights and can access other folders. Review project entries before you approve them, particularly entries from a cloned repository.
+
 ### Turn a server on
 
 A new server is off in Pi Pocket. Examine its entry on the MCP page, then turn it on with its switch. Pi Pocket then starts it, and Pi can use its tools.
@@ -78,12 +91,12 @@ The switch stops a changed entry that you did not see. For example, Pi can chang
 
 ### How Pi Pocket runs servers
 
-- **One copy for all sessions.** Pi Pocket starts one copy of each server, and all sessions use it. The terminal app starts a copy for each session, in the session's folder.
-- **The folder.** A stdio server runs in the folder that its `cwd` gives. A relative `cwd`, and no `cwd`, start from your home folder. So an argument such as `.` is your home folder, not the folder of a session. Give a full path instead.
+- **One copy per scope.** Pi Pocket starts one copy of each user server for all sessions, and one copy of each project server for sessions in that project. The terminal app starts a copy for each session, in the session's folder.
+- **The folder.** A stdio server runs in the folder that its `cwd` gives. For user entries, a relative `cwd`, and no `cwd`, start from your home folder. For project entries, they start from the project root. So an argument such as `.` is your home folder, not the folder of a session. Give a full path instead.
 - **No roots.** Pi Pocket does not send roots (folders) to servers.
 - **Environment.** A stdio server gets the environment of Pi Pocket's server, and the `env` of its entry. Values in `env` and `headers` can name environment variables (`${GITHUB_TOKEN}`) or run a command (`"!gh auth token"`), as in the terminal app.
 - **Exposure.** Pi Pocket does not use `exposure` and `toolExposure`, except `hidden`: a hidden tool is not available to Pi. All other tools are available through `mcp_tools` and `mcp_call`.
-- **Only the user file.** Pi Pocket does not read the `.pi/mcp.json` of a project. A server serves all sessions, and Pi can write files in a project.
+- **User and project files.** Pi Pocket reads the user file and the `.pi/mcp.json` directly in the session's folder. Project entries need separate owner approval.
 - **Stopping.** When a server goes off, Pi Pocket closes its input, then stops its process group. A program that a server started in a group of its own can continue to run.
 
 ### Not supported (yet)
@@ -146,10 +159,10 @@ The `oauth` fields of an entry work as in the terminal app: `clientId`, `clientS
 
 ## What it reads, writes, and contacts
 
-- **Reads** `~/.pi/agent/mcp.json`, the environment variables that its `env`, `headers`, and `oauth.clientSecret` values name, and the output of the commands that these values give (`!command`, run with your shell).
+- **Reads** `~/.pi/agent/mcp.json` and local sessions' `.pi/mcp.json`, the environment variables that its `env`, `headers`, and `oauth.clientSecret` values name, and the output of the commands that these values give (`!command`, run with your shell).
 - **Starts** the stdio servers that you turned on.
 - **Contacts** the HTTP servers that you turned on. For a server that signs in with OAuth, it also contacts its authorization server: to sign in, and to refresh the tokens.
-- **Writes** `~/.pi-pocket/mcp/settings.json` (the servers that you turned on, with the hashes of their entries, and the plan-mode switches) and `~/.pi-pocket/mcp/oauth.json` (the sign-in tokens). Both are only for your user.
+- **Writes** `~/.pi-pocket/mcp/settings.json` (the servers that you turned on, with the hashes of their entries, and the plan-mode switches) and `~/.pi-pocket/mcp/oauth.json` (the sign-in tokens). Both are only for your user. Each project keeps separate copies under `mcp/projects/<sha256-of-canonical-root>/mcp/`.
 - **Listens** on the loopback address of the redirect (`127.0.0.1` by default) while a sign-in waits, for at most 10 minutes.
 - It does not change `mcp.json`.
 
