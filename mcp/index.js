@@ -243,6 +243,12 @@ export default function setup(pocket) {
         const [state, setState] = useState(null);
         const [error, setError] = useState(null);
         const [busy, setBusy] = useState(false);
+        const [project, setProject] = useState("");
+        const [projects, setProjects] = useState([]);
+        const scopedPath = useCallback(
+            (path) => (project ? `${path}?project=${encodeURIComponent(project)}` : path),
+            [project],
+        );
         // Answers can come back out of order: only the newest request sets the state.
         const latest = useRef(0);
 
@@ -257,60 +263,109 @@ export default function setup(pocket) {
             const request = ++latest.current;
 
             try {
-                show(request, await pocket.api("state"));
-                setError(null);
+                show(request, await pocket.api(scopedPath("state")));
+
+                if (request === latest.current) {
+                    setError(null);
+                }
             } catch (failure) {
-                setError(failure.message);
+                if (request === latest.current) {
+                    setError(failure.message);
+                }
             }
-        }, []);
+        }, [scopedPath]);
 
         /**
          * Do one thing on the server, then show the new state. A sign-in opens its page from a link. With `quiet`, the
          * caller shows the error.
          */
-        const act = useCallback(async (path, body, { quiet = false } = {}) => {
-            setBusy(true);
+        const act = useCallback(
+            async (path, body, { quiet = false } = {}) => {
+                setBusy(true);
 
-            const request = ++latest.current;
+                const request = ++latest.current;
 
-            try {
-                const answer = await pocket.api(path, body);
+                try {
+                    const answer = await pocket.api(scopedPath(path), body);
 
-                if (answer && Array.isArray(answer.servers)) {
-                    show(request, answer);
-                } else {
-                    await refresh();
+                    if (answer && Array.isArray(answer.servers)) {
+                        show(request, answer);
+                    } else {
+                        await refresh();
+                    }
+
+                    setError(null);
+                } catch (failure) {
+                    if (!quiet) {
+                        setError(failure.message);
+                    }
+
+                    throw failure;
+                } finally {
+                    setBusy(false);
                 }
+            },
+            [scopedPath, refresh],
+        );
 
-                setError(null);
-            } catch (failure) {
-                if (!quiet) {
-                    setError(failure.message);
-                }
+        useEffect(() => {
+            let active = true;
 
-                throw failure;
-            } finally {
-                setBusy(false);
-            }
+            pocket.api("projects").then(
+                (answer) => {
+                    if (active) {
+                        setProjects(answer.projects);
+                    }
+                },
+                (failure) => {
+                    if (active) {
+                        setError(failure.message);
+                    }
+                },
+            );
+
+            return () => {
+                active = false;
+            };
         }, []);
 
         useEffect(() => {
             void refresh();
+            const stop = pocket.on("changed", () => void refresh());
 
-            return pocket.on("changed", () => void refresh());
-        }, []);
+            return () => {
+                ++latest.current;
+                stop();
+            };
+        }, [refresh]);
+
+        const configuration = html`<label class="small">
+                Configuration
+                <select class="mcp-input" value=${project} disabled=${busy}
+                    onChange=${(event) => {
+                        ++latest.current;
+                        setState(null);
+                        setProject(event.currentTarget.value);
+                    }}>
+                    <option value="">User · all projects</option>
+                    ${projects.map((cwd) => html`<option value=${cwd}>Project · ${cwd}</option>`)}
+                </select>
+            </label>`;
 
         if (!state) {
-            return error
-                ? html`<div class="error-box">${error}</div>
+            return html`<div class="mcp-page">${configuration}${
+                error
+                    ? html`<div class="error-box">${error}</div>
                       <button class="button" onClick=${refresh}>Try again</button>`
-                : html`<${Loader} label="Reading mcp.json" />`;
+                    : html`<${Loader} label="Reading mcp.json" />`
+            }</div>`;
         }
 
         return html`<div class="mcp-page">
+            ${configuration}
             <p class="small muted">
-                The servers of <span class="mono">${state.file}</span>, which Pi's terminal app uses
-                too. Each server is a program that runs with your rights, and Lancet Guard does not
+                The servers of <span class="mono">${state.file}</span>.
+                ${project ? "These servers are available only to sessions in this project folder. A project entry shadows a user entry with the same name, even while off." : "These servers are available to all projects, unless a project entry has the same name."} Each server is a program that runs with your rights, and Lancet Guard does not
                 check the calls of its tools. Pi Pocket starts a server only after you turn it on here,
                 and again after each change to its entry.
             </p>
@@ -334,8 +389,7 @@ export default function setup(pocket) {
             ${
                 state.servers.length === 0
                     ? html`<p class="muted">
-                      mcp.json has no servers. Add one with <span class="mono">pi mcp add</span> in a
-                      terminal, then read mcp.json again.
+                      mcp.json has no servers. Add an entry to <span class="mono">${state.file}</span>, then read mcp.json again.
                   </p>`
                     : state.servers.map(
                           (server) =>
